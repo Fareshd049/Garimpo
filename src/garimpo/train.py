@@ -193,6 +193,10 @@ def main() -> None:
     with open(csv_path, "w", newline="") as f:
         csv.DictWriter(f, fieldnames=CSV_FIELDS).writeheader()
 
+    checkpoints_dir = output_dir / "checkpoints"
+    checkpoints_dir.mkdir(parents=True, exist_ok=True)
+    serializable_args = {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()}
+
     best_val_combined = float("inf")
     epochs_without_improvement = 0
     best_checkpoint_path = output_dir / "best.pt"
@@ -229,11 +233,22 @@ def main() -> None:
                 "epoch_seconds": epoch_seconds,
             })
 
+        torch.save(
+            {
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "val_combined": val_metrics["combined"],
+                "val_dice": val_metrics["dice"],
+                "val_iou": val_metrics["iou"],
+            },
+            checkpoints_dir / f"epoch_{epoch:03d}.pt",
+        )
+
         if val_metrics["combined"] < best_val_combined - args.min_delta:
             best_val_combined = val_metrics["combined"]
             epochs_without_improvement = 0
             torch.save(
-                {"epoch": epoch, "model_state_dict": model.state_dict(), "val_combined": best_val_combined, "args": vars(args)},
+                {"epoch": epoch, "model_state_dict": model.state_dict(), "val_combined": best_val_combined, "args": serializable_args},
                 best_checkpoint_path,
             )
             logger.info("  -> new best checkpoint (val_combined=%.4f)", best_val_combined)
