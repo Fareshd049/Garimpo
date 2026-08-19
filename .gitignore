@@ -1,0 +1,19 @@
+# Data (too heavy for git; raw imagery, tiles, masks, label CSVs)
+data/
+
+# Training outputs (checkpoints, per-run metrics)
+runs/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
