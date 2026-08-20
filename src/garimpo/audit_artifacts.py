@@ -30,24 +30,43 @@ def near_black_mask(image: np.ndarray, threshold: int) -> np.ndarray:
     return (image[..., 0] < threshold) & (image[..., 1] < threshold) & (image[..., 2] < threshold)
 
 
-def significant_blob_mask(mask: np.ndarray, min_blob_size: int) -> np.ndarray:
-    """mask with only connected components larger than min_blob_size kept."""
+def label_significant_blobs(mask: np.ndarray, min_blob_size: int) -> tuple[np.ndarray, list[int]]:
+    """Label mask's connected components, keeping only ids for blobs > min_blob_size."""
     labeled, n = ndimage.label(mask)
     if n == 0:
-        return np.zeros_like(mask, dtype=bool)
+        return labeled, []
     sizes = ndimage.sum(mask, labeled, index=np.arange(1, n + 1))
-    keep_labels = np.where(sizes > min_blob_size)[0] + 1
-    return np.isin(labeled, keep_labels)
+    keep_labels = [int(label_id) for label_id in (np.where(sizes > min_blob_size)[0] + 1)]
+    return labeled, keep_labels
 
 
-def distance_box_to_mask(box: tuple[int, int, int, int], significant_mask: np.ndarray) -> float:
-    """Min distance from any pixel in box to the nearest True pixel in significant_mask.
-    0 if the box overlaps a significant blob; inf if the tile has no significant blob."""
-    if not significant_mask.any():
-        return float("inf")
-    dist_map = ndimage.distance_transform_edt(~significant_mask)
+def blob_touches_border(labeled: np.ndarray, label_id: int) -> bool:
+    """Mosaic/nodata cuts always intersect the scene boundary, so they always touch a tile
+    edge; a fully interior blob (never touching an edge) is more consistent with a cloud
+    shadow than with scene nodata."""
+    blob = labeled == label_id
+    return bool(blob[0, :].any() or blob[-1, :].any() or blob[:, 0].any() or blob[:, -1].any())
+
+
+def nearest_blob_to_box(
+    box: tuple[int, int, int, int], labeled: np.ndarray, keep_labels: list[int]
+) -> tuple[float, bool | None]:
+    """Distance from box to the nearest kept blob, and whether *that* blob touches the tile
+    border. Returns (inf, None) if the tile has no qualifying blob."""
+    if not keep_labels:
+        return float("inf"), None
+
     xmin, ymin, xmax, ymax = box
-    return float(dist_map[ymin:ymax, xmin:xmax].min())
+    best_distance = float("inf")
+    best_label = None
+    for label_id in keep_labels:
+        dist_map = ndimage.distance_transform_edt(labeled != label_id)
+        distance = float(dist_map[ymin:ymax, xmin:xmax].min())
+        if distance < best_distance:
+            best_distance = distance
+            best_label = label_id
+
+    return best_distance, blob_touches_border(labeled, best_label)
 
 
 def run_part1(tiles_dir: Path, labels_csv: Path, black_threshold: int) -> pd.DataFrame:
@@ -69,14 +88,15 @@ def run_part2(tiles_dir: Path, bboxes_csv: Path, black_threshold: int, min_blob_
     for filename, boxes in tqdm(boxes_by_filename.items(), desc="Part 2: box-to-artifact distance"):
         image = np.array(Image.open(tiles_dir / filename).convert("RGB"))
         mask = near_black_mask(image, black_threshold)
-        sig_mask = significant_blob_mask(mask, min_blob_size)
+        labeled, keep_labels = label_significant_blobs(mask, min_blob_size)
 
         for xmin, ymin, xmax, ymax in boxes:
-            distance = distance_box_to_mask((xmin, ymin, xmax, ymax), sig_mask)
+            distance, touches_border = nearest_blob_to_box((xmin, ymin, xmax, ymax), labeled, keep_labels)
             rows.append({
                 "filename": filename,
                 "xmin": xmin, "ymin": ymin, "xmax": xmax, "ymax": ymax,
                 "distance_to_artifact": distance,
+                "nearest_blob_touches_border": touches_border,
             })
 
     return pd.DataFrame(rows).sort_values("distance_to_artifact", ascending=True, ignore_index=True)
@@ -133,6 +153,10 @@ def main() -> None:
     n_suspicious = int(part2["suspicious"].sum())
     n_no_blob = int((part2["distance_to_artifact"] == float("inf")).sum())
 
+    flagged = part2[part2["suspicious"]]
+    flagged_border = flagged[flagged["nearest_blob_touches_border"] == True]  # noqa: E712
+    flagged_interior = flagged[flagged["nearest_blob_touches_border"] == False]  # noqa: E712
+
     logger.info("")
     logger.info("=" * 70)
     logger.info("SUMMARY")
@@ -142,6 +166,18 @@ def main() -> None:
         "(flagged suspicious). %d boxes have no qualifying blob in their tile at all.",
         n_suspicious, n_boxes, n_tiles, args.suspicious_distance, args.min_blob_size, n_no_blob,
     )
+    logger.info(
+        "  -> %d of those touch the tile border (consistent with mosaic/nodata seam)",
+        len(flagged_border),
+    )
+    if len(flagged_border):
+        logger.info("\n%s", flagged_border.drop(columns=["suspicious"]).to_string(index=False))
+    logger.info(
+        "  -> %d of those are fully interior (not touching any edge - consistent with cloud shadow, not scene nodata)",
+        len(flagged_interior),
+    )
+    if len(flagged_interior):
+        logger.info("\n%s", flagged_interior.drop(columns=["suspicious"]).to_string(index=False))
     logger.info(
         "Part 1: positive tiles have %s more near-black pixel content than negative tiles "
         "(Mann-Whitney one-sided p=%.6f, %s at alpha=0.05).",
