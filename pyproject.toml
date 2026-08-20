@@ -10,6 +10,7 @@ dependencies = [
     "numpy",
     "pandas",
     "pillow",
+    "scipy",
     "tqdm",
     "torch",
     "torchvision",
