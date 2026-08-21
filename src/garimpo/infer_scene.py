@@ -128,6 +128,10 @@ def main() -> None:
     Image.fromarray((overlay * 255).astype(np.uint8)).save(args.output_path)
     logger.info("Wrote stitched heatmap overlay to %s", args.output_path)
 
+    prob_path = args.output_path.with_name(args.output_path.stem + "_prob" + args.output_path.suffix)
+    Image.fromarray((prob * 255).astype(np.uint8), mode="L").save(prob_path)
+    logger.info("Wrote raw probability map to %s", prob_path)
+
 
 if __name__ == "__main__":
     main()
