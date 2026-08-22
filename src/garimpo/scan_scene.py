@@ -46,10 +46,13 @@ def scan_for_blobs(
             continue
         ys, xs = np.where(labeled == label_id)
         y0, y1, x0, x1 = int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max())
+        blob_probs = prob[ys, xs]
         blobs.append({
             "xmin": x0, "ymin": y0, "xmax": x1, "ymax": y1,
+            "cx": float(xs.mean()), "cy": float(ys.mean()),
             "size_px": size,
-            "max_prob": float(prob[y0:y1 + 1, x0:x1 + 1].max()),
+            "max_prob": float(blob_probs.max()),
+            "mean_prob": float(blob_probs.mean()),
             "near_black_frac": float(near_black[y0:y1 + 1, x0:x1 + 1].mean()),
         })
 

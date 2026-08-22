@@ -73,6 +73,21 @@
     color: #9aa4b2;
     margin-top: 3px;
   }
+  .marker-legend-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #cdd3db;
+    margin-top: 3px;
+  }
+  .marker-legend-row .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+    border: 1px solid #111;
+  }
   #caveat {
     margin-top: 12px;
     padding-top: 10px;
@@ -96,12 +111,22 @@
   <label for="opacity">Heatmap opacity: <span id="opacity-value">80%</span></label>
   <input type="range" id="opacity" min="0" max="100" value="80">
 
+  <label for="threshold">Detection threshold: <span id="threshold-value">0.50</span> (<span id="marker-count">0</span> shown)</label>
+  <input type="range" id="threshold" min="0.05" max="0.95" step="0.05" value="0.50">
+
   <div id="meta"></div>
 
   <div id="legend">
     <label style="margin:0 0 4px 0;">Predicted probability</label>
     <div id="legend-bar"></div>
     <div id="legend-labels"><span>low</span><span>high</span></div>
+  </div>
+
+  <div id="marker-legend">
+    <label style="margin:8px 0 4px 0;">Detection markers (max prob.)</label>
+    <div class="marker-legend-row"><span class="dot" style="background:#ff3b30;"></span>&gt; 0.8</div>
+    <div class="marker-legend-row"><span class="dot" style="background:#ff9500;"></span>0.5 &ndash; 0.8</div>
+    <div class="marker-legend-row"><span class="dot" style="background:#29b6f6;"></span>&lt; 0.5</div>
   </div>
 
   <div id="caveat">
@@ -114,6 +139,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="manifest.js"></script>
+<script src="blobs.js"></script>
 <script>
   // Footprint bounding boxes: [lat, lng] corners from CBERS metadata XML (one date per
   // footprint), reused across every scene sharing that path/row. Near north-up, so a
@@ -129,6 +155,22 @@
     return L.latLngBounds(fp.sw, fp.ne);
   }
 
+  // Blob centroids are exported in raw image-pixel coordinates (export_blob_markers.py);
+  // convert to lat/lng using the same footprint bounds as the image overlay, so markers
+  // land exactly where the corresponding pixel sits on the heatmap image.
+  function pixelToLatLng(x, y, width, height, pathRow) {
+    const fp = FOOTPRINTS[pathRow];
+    const lat = fp.ne[0] - (y / height) * (fp.ne[0] - fp.sw[0]);
+    const lng = fp.sw[1] + (x / width) * (fp.ne[1] - fp.sw[1]);
+    return [lat, lng];
+  }
+
+  function markerColor(maxProb) {
+    if (maxProb > 0.8) return '#ff3b30';
+    if (maxProb >= 0.5) return '#ff9500';
+    return '#29b6f6';
+  }
+
   const map = L.map('map', { zoomControl: true });
 
   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
@@ -137,15 +179,46 @@
   }).addTo(map);
 
   let currentOverlay = null;
+  let currentScene = null;
+  const markerLayer = L.layerGroup().addTo(map);
+
+  function renderMarkers() {
+    markerLayer.clearLayers();
+    if (!currentScene) return;
+
+    const sceneBlobs = BLOBS[currentScene.id];
+    const thresholdKey = Number(document.getElementById('threshold').value).toFixed(2);
+    const blobs = (sceneBlobs && sceneBlobs.by_threshold[thresholdKey]) || [];
+
+    for (const b of blobs) {
+      const [lat, lng] = pixelToLatLng(b.x, b.y, sceneBlobs.width, sceneBlobs.height, currentScene.path_row);
+      L.circleMarker([lat, lng], {
+        radius: 7,
+        color: '#111111',
+        weight: 1.5,
+        fillColor: markerColor(b.max_prob),
+        fillOpacity: 0.9,
+      })
+        .bindPopup(
+          `<strong>Detection</strong><br>` +
+          `Max probability: ${b.max_prob.toFixed(3)}<br>` +
+          `Mean probability: ${b.mean_prob.toFixed(3)}`
+        )
+        .addTo(markerLayer);
+    }
+    document.getElementById('marker-count').textContent = blobs.length;
+  }
 
   function showScene(scene) {
     if (currentOverlay) {
       map.removeLayer(currentOverlay);
     }
+    currentScene = scene;
     const bounds = boundsFor(scene.path_row);
     const opacity = document.getElementById('opacity').value / 100;
     currentOverlay = L.imageOverlay(scene.heatmap_file, bounds, { opacity: opacity }).addTo(map);
     map.fitBounds(bounds);
+    renderMarkers();
 
     document.getElementById('meta').innerHTML =
       `Date: <strong>${scene.date}</strong><br>Path/row: <strong>${scene.path_row}</strong>`;
@@ -177,6 +250,17 @@
       currentOverlay.setOpacity(e.target.value / 100);
     }
   });
+
+  document.getElementById('threshold').addEventListener('input', (e) => {
+    document.getElementById('threshold-value').textContent = Number(e.target.value).toFixed(2);
+    renderMarkers();
+  });
+
+  const requestedThreshold = new URLSearchParams(location.search).get('threshold');
+  if (requestedThreshold) {
+    document.getElementById('threshold').value = requestedThreshold;
+    document.getElementById('threshold-value').textContent = Number(requestedThreshold).toFixed(2);
+  }
 
   if (MANIFEST.length > 0) {
     const requested = new URLSearchParams(location.search).get('scene');

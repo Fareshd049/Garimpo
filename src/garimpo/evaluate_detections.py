@@ -91,8 +91,8 @@ def merge_overlapping_boxes(
 
 def match_boxes_to_blobs(
     boxes: list[tuple[int, int, int, int]], blobs: list[dict], distance_threshold: float
-) -> tuple[int, int, int]:
-    """Greedy nearest-first one-to-one matching. Returns (tp, fp, fn)."""
+) -> tuple[int, int, int, set[int]]:
+    """Greedy nearest-first one-to-one matching. Returns (tp, fp, fn, matched_blob_indices)."""
     candidates = []
     for bi, box in enumerate(boxes):
         for bj, blob in enumerate(blobs):
@@ -113,7 +113,7 @@ def match_boxes_to_blobs(
     tp = len(matched_boxes)
     fn = len(boxes) - tp
     fp = len(blobs) - len(matched_blobs)
-    return tp, fp, fn
+    return tp, fp, fn, matched_blobs
 
 
 def precision_recall(sub: pd.DataFrame) -> tuple[float, float]:
@@ -139,6 +139,7 @@ def main() -> None:
     parser.add_argument("--merge-duplicate-boxes", dest="merge_duplicate_boxes", action="store_true", default=True)
     parser.add_argument("--no-merge-duplicate-boxes", dest="merge_duplicate_boxes", action="store_false")
     parser.add_argument("--merge-threshold", type=float, default=0.0, help="px; ground-truth boxes this close are merged into one site")
+    parser.add_argument("--nodata-threshold", type=float, default=0.3, help="near_black_frac above this counts an FP as nodata-adjacent")
     args = parser.parse_args()
 
     boxes_by_scene = ground_truth_boxes_by_scene(args.bboxes_csv)
@@ -173,7 +174,24 @@ def main() -> None:
         blobs = scan_scene(prob_path, raw_candidates[0], args.prob_threshold, args.min_blob_size, args.black_threshold)
         boxes = boxes_by_scene.get(scene_id, [])
 
-        tp, fp, fn = match_boxes_to_blobs(boxes, blobs, args.match_distance)
+        tp, fp, fn, matched_blobs = match_boxes_to_blobs(boxes, blobs, args.match_distance)
+
+        fp_nodata = 0
+        fp_clean = 0
+        for bj, blob in enumerate(blobs):
+            if bj in matched_blobs:
+                continue
+            if blob["near_black_frac"] > args.nodata_threshold:
+                fp_nodata += 1
+            else:
+                fp_clean += 1
+
+        if fp_nodata + fp_clean != fp:
+            logger.warning(
+                "RECONCILIATION MISMATCH for %s: fp_nodata(%d) + fp_clean(%d) = %d != fp(%d)",
+                scene_id, fp_nodata, fp_clean, fp_nodata + fp_clean, fp,
+            )
+
         rows.append({
             "scene": scene_id,
             "split": "val" if scene_id in val_scenes else "train",
@@ -181,6 +199,8 @@ def main() -> None:
             "n_blobs": len(blobs),
             "tp": tp,
             "fp": fp,
+            "fp_nodata": fp_nodata,
+            "fp_clean": fp_clean,
             "fn": fn,
         })
 
@@ -199,6 +219,20 @@ def main() -> None:
         logger.info(
             "%-22s TP=%-4d FP=%-4d FN=%-4d precision=%.3f recall=%.3f",
             label, tp, fp, fn, precision, recall,
+        )
+
+    total_fp = int(df["fp"].sum())
+    total_fp_split = int(df["fp_nodata"].sum()) + int(df["fp_clean"].sum())
+    logger.info("")
+    if total_fp_split == total_fp:
+        logger.info(
+            "Reconciliation OK: FP_nodata(%d) + FP_clean(%d) = %d == total FP(%d)",
+            int(df["fp_nodata"].sum()), int(df["fp_clean"].sum()), total_fp_split, total_fp,
+        )
+    else:
+        logger.warning(
+            "RECONCILIATION MISMATCH: FP_nodata(%d) + FP_clean(%d) = %d != total FP(%d)",
+            int(df["fp_nodata"].sum()), int(df["fp_clean"].sum()), total_fp_split, total_fp,
         )
 
 
