@@ -76,4 +76,27 @@ tiles have 2 boxes each). The 9 remaining flagged boxes above were left as-is �
 audit is diagnostic, not a relabeling pass, so only the one visually-confirmed case was
 corrected.
 
-Last updated: 2026-08-20.
+## Related limitation: duplicate box labels at tile-grid corners
+
+Discovered while building full-scene evaluation (`src/garimpo/evaluate_detections.py`).
+Boxes were labeled per-tile on the non-overlapping 512px tiling grid, so a real site
+sitting near a corner shared by several adjacent tiles gets an independent box drawn in
+each tile it touches — the same physical site, labeled multiple times.
+
+Evidence: across all 12 scenes with ground-truth boxes, nearest-neighbor distance
+between boxes in the same scene is cleanly bimodal — either exactly 0px (literal
+bounding-box overlap) or 59px+, nothing in between. 14 of the 42 boxes fall into 6
+overlapping clusters (five pairs, one group of four at a single site in
+`20220921_226_120`), reducing 42 raw boxes to **34 unique sites** once merged.
+
+This doesn't affect tile-level training (each tile's mask is rasterized independently,
+so a duplicate-labeled site just means its mask is correctly filled in each of the
+tiles it appears in — no double-counting there). It only matters for full-scene,
+absolute-coordinate evaluation: matching detections against the 42 raw boxes under
+strict one-to-one matching manufactures 8 false negatives that are actually the same
+site being counted multiple times against a single correct detection.
+`evaluate_detections.py` merges boxes within 0px of each other (i.e. literal overlap)
+into one site by default (`--merge-duplicate-boxes`, on by default;
+`--no-merge-duplicate-boxes` to see the raw/unmerged numbers).
+
+Last updated: 2026-08-21.
