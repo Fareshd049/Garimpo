@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Garimpo Detection Viewer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  html, body { height: 100%; margin: 0; font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+  #map { position: absolute; inset: 0; background: #0a0e14; }
+
+  #panel {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 1000;
+    background: rgba(20, 24, 30, 0.92);
+    color: #e8eaed;
+    border-radius: 8px;
+    padding: 14px 16px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.4);
+    width: 300px;
+    font-size: 13px;
+  }
+  #panel h1 {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0 0 10px 0;
+    letter-spacing: 0.02em;
+  }
+  #panel label {
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #9aa4b2;
+    margin: 10px 0 4px 0;
+  }
+  #panel select {
+    width: 100%;
+    padding: 6px 8px;
+    border-radius: 4px;
+    border: 1px solid #3a4250;
+    background: #1c222c;
+    color: #e8eaed;
+    font-size: 13px;
+  }
+  #panel input[type="range"] {
+    width: 100%;
+  }
+  #opacity-value { color: #cdd3db; font-variant-numeric: tabular-nums; }
+  #meta {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid #333a45;
+    font-size: 12px;
+    color: #aab2bd;
+    line-height: 1.5;
+  }
+  #legend {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid #333a45;
+  }
+  #legend-bar {
+    height: 10px;
+    border-radius: 3px;
+    background: linear-gradient(to right, #000000, #ff0000, #ffff00, #ffffff);
+  }
+  #legend-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: #9aa4b2;
+    margin-top: 3px;
+  }
+  #caveat {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid #333a45;
+    font-size: 11px;
+    color: #8b93a0;
+    line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="panel">
+  <h1>Garimpo Detection Viewer</h1>
+
+  <label for="scene-select">Scene</label>
+  <select id="scene-select"></select>
+
+  <label for="opacity">Heatmap opacity: <span id="opacity-value">80%</span></label>
+  <input type="range" id="opacity" min="0" max="100" value="80">
+
+  <div id="meta"></div>
+
+  <div id="legend">
+    <label style="margin:0 0 4px 0;">Predicted probability</label>
+    <div id="legend-bar"></div>
+    <div id="legend-labels"><span>low</span><span>high</span></div>
+  </div>
+
+  <div id="caveat">
+    Overlay placement uses one bounding box per footprint (path/row), taken from a
+    single date's CBERS metadata and reused across all dates on that footprint. CBERS
+    track stability is ~&plusmn;5km pass-to-pass, so this is a reasonable demo-quality
+    placement, not pixel-exact per-date georeferencing.
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="manifest.js"></script>
+<script>
+  // Footprint bounding boxes: [lat, lng] corners from CBERS metadata XML (one date per
+  // footprint), reused across every scene sharing that path/row. Near north-up, so a
+  // plain axis-aligned image overlay is a reasonable approximation -- see
+  // docs/dataset_limitations.md for the full caveat.
+  const FOOTPRINTS = {
+    "226_120": { sw: [-6.101148, -61.729594], ne: [-5.050190, -60.708550] },
+    "226_121": { sw: [-6.895224, -61.895784], ne: [-5.844148, -60.872760] },
+  };
+
+  function boundsFor(pathRow) {
+    const fp = FOOTPRINTS[pathRow];
+    return L.latLngBounds(fp.sw, fp.ne);
+  }
+
+  const map = L.map('map', { zoomControl: true });
+
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+    maxZoom: 18,
+  }).addTo(map);
+
+  let currentOverlay = null;
+
+  function showScene(scene) {
+    if (currentOverlay) {
+      map.removeLayer(currentOverlay);
+    }
+    const bounds = boundsFor(scene.path_row);
+    const opacity = document.getElementById('opacity').value / 100;
+    currentOverlay = L.imageOverlay(scene.heatmap_file, bounds, { opacity: opacity }).addTo(map);
+    map.fitBounds(bounds);
+
+    document.getElementById('meta').innerHTML =
+      `Date: <strong>${scene.date}</strong><br>Path/row: <strong>${scene.path_row}</strong>`;
+  }
+
+  const select = document.getElementById('scene-select');
+  const groups = {};
+  for (const scene of MANIFEST) {
+    if (!groups[scene.path_row]) {
+      groups[scene.path_row] = document.createElement('optgroup');
+      groups[scene.path_row].label = scene.path_row;
+      select.appendChild(groups[scene.path_row]);
+    }
+    const opt = document.createElement('option');
+    opt.value = scene.id;
+    opt.textContent = scene.date;
+    groups[scene.path_row].appendChild(opt);
+  }
+
+  function sceneById(id) {
+    return MANIFEST.find(s => s.id === id);
+  }
+
+  select.addEventListener('change', () => showScene(sceneById(select.value)));
+
+  document.getElementById('opacity').addEventListener('input', (e) => {
+    document.getElementById('opacity-value').textContent = e.target.value + '%';
+    if (currentOverlay) {
+      currentOverlay.setOpacity(e.target.value / 100);
+    }
+  });
+
+  if (MANIFEST.length > 0) {
+    const requested = new URLSearchParams(location.search).get('scene');
+    const initial = (requested && sceneById(requested)) || MANIFEST[0];
+    select.value = initial.id;
+    showScene(initial);
+  }
+</script>
+
+</body>
+</html>

@@ -99,4 +99,21 @@ site being counted multiple times against a single correct detection.
 into one site by default (`--merge-duplicate-boxes`, on by default;
 `--no-merge-duplicate-boxes` to see the raw/unmerged numbers).
 
+## Related limitation: approximate georeferencing in the web viewer
+
+`web_viewer/index.html` places each scene's heatmap on a real satellite basemap using
+one bounding box per footprint (`226_120`, `226_121`), taken from a single date's CBERS
+metadata XML (`boundingBox` corners) and reused for every other date on that footprint
+— we only have exact per-scene metadata for one date per footprint, not all 13. The
+scene footprint is also nearly north-up, so a plain axis-aligned image overlay is a
+reasonable approximation of its (slightly rotated) true shape, not pixel-perfect
+georeferencing.
+
+CBERS-4A has track stability on the order of ±5km pass-to-pass, so the same nominal
+footprint can shift by that much between dates in reality. This is fine for a
+demo-quality viewer showing roughly where a scene sits relative to the river/terrain,
+but should not be read as survey-grade per-date registration. Proper per-date
+georeferencing would need each date's own metadata XML (deferred, along with true
+GeoTIFF output generally — see the project's original PNG-vs-GeoTIFF tradeoff).
+
 Last updated: 2026-08-21.
