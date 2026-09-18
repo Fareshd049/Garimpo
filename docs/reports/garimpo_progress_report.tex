@@ -207,8 +207,9 @@ CBERS 4A imagery is freely distributed by INPE.
 \section{Data and Methodology}
 
 Figure~\ref{fig:pipeline} gives an overview of the full processing pipeline
-described in this section and Sections~\ref{sec:audit}--\ref{sec:map}, from
-raw scene acquisition through to the interactive map prototype.
+described in this section and Sections~\ref{sec:audit}--\ref{sec:geomorph},
+from raw scene acquisition through full-scene detection and false-positive
+root-cause analysis.
 
 \begin{figure}[htbp]
 \centering
@@ -230,11 +231,10 @@ raw scene acquisition through to the interactive map prototype.
 \node[box, below=of n5] (n6) {6. Scene-grouped train/validation split};
 \node[boxnew, below=of n6] (n7) {7. U-Net (ResNet18) training: weighted BCE + Dice (Sec.~\ref{sec:model})};
 \node[boxnew, below=of n7] (n8) {8. Sliding-window full-scene inference \& evaluation};
-\node[boxnew, below=of n8] (n9) {9. Prototype map interface (Sec.~\ref{sec:map})};
-\foreach \a/\b in {n1/n2,n2/n3,n3/n4,n4/n5,n5/n6,n6/n7,n7/n8,n8/n9}
+\foreach \a/\b in {n1/n2,n2/n3,n3/n4,n4/n5,n5/n6,n6/n7,n7/n8}
   \draw[arr] (\a) -- (\b);
 \end{tikzpicture}
-\caption{Overview of the full processing pipeline. Orange stages (5, 7--9)
+\caption{Overview of the full processing pipeline. Orange stages (5, 7--8)
 are new since the previous report.}
 \label{fig:pipeline}
 \end{figure}
@@ -260,8 +260,9 @@ revisited as a concrete next step (Section~\ref{sec:nextsteps}). The original
 georeferenced 4-band TIFF products (BAND0--BAND4, with accompanying XML
 metadata) were subsequently located in a project data mirror and used later
 in this report specifically to recover approximate scene footprint
-coordinates for the prototype map interface (Section~\ref{sec:map}); they
-have not yet been reintroduced into the model training pipeline itself.
+coordinates as groundwork for a planned interactive map interface (see
+Section~\ref{sec:nextsteps}); they have not yet been reintroduced into the
+model training pipeline itself.
 Figure~\ref{fig:rawscene} shows a representative full raw scene.
 
 \begin{figure}[htbp]
@@ -271,7 +272,7 @@ Figure~\ref{fig:rawscene} shows a representative full raw scene.
 226/120), as merged to RGB PNG. The rotated diamond-shaped content region
 against black padding reflects the sensor's actual (non north-aligned)
 scan geometry within a north-up padded export canvas, confirmed against
-CBERS product metadata in Section~\ref{sec:map}.}
+CBERS product metadata.}
 \label{fig:rawscene}
 \end{figure}
 
@@ -744,8 +745,8 @@ respectively), consistent with the documented sensitivity and not, on
 their own, cause for additional concern.
 
 A closer investigation of the ``clean'' (non-nodata) false positives was
-prompted by an observation made while building the map interface
-(Section~\ref{sec:map}): several detections appeared, at first glance, to
+prompted by an observation made during an early map-interface prototyping
+exercise: several detections appeared, at first glance, to
 sit well inland with no visible water nearby, raising the concern that the
 model might be responding to bare or cleared land in general rather than
 any water-related signature. This was investigated in two stages, and the
@@ -867,9 +868,13 @@ development --- a high-confidence marker appearing to sit on an unrelated
 inland forest clearing, well away from any labeled site --- was traced to
 a different cause entirely: the scene in question is not one of the two
 dates for which exact footprint coordinates are available, and inherits
-the documented approximate-georeferencing limitation of
-Section~\ref{sec:map} (marker \emph{display} position offset, not a
-detection or model issue). Verification on an actual reference-date scene
+the approximate-georeferencing limitation of the prototype map interface
+(Section~\ref{sec:nextsteps}): the current implementation reuses one
+date's footprint coordinates for all other dates of the same path/row, a
+reasonable approximation given CBERS's documented $\pm$5 km track
+stability but not pixel-exact across dates (a marker \emph{display}
+position offset, not a detection or model issue). Verification on an
+actual reference-date scene
 confirmed the underlying pixel-to-coordinate transform itself is correct,
 with only a small residual offset attributable to approximating the true
 rotated scene footprint with a north-aligned rectangle.
@@ -884,58 +889,15 @@ though the validation-split numbers in Table~\ref{tab:evalsummary} are
 based on only three scenes and should not be over-interpreted as a tightly
 estimated figure.
 
-\section{Prototype Map Interface}
-\label{sec:map}
-
-A first interactive map prototype was built to display model output overlaid
-on a real satellite basemap, as a step toward a deployable monitoring tool.
-Model probability maps are converted to transparent color overlays (a
-black--red--yellow ramp, with opacity scaling with predicted probability) and
-placed on an Esri World Imagery basemap using Leaflet.
-
-Real-world footprint coordinates were recovered from the CBERS 4A product
-metadata (XML files accompanying the original band GeoTIFFs), specifically
-the \texttt{boundingBox} corner coordinates, which describe a near
-north-aligned rectangle containing the sensor's actual (rotated) scanned
-swath. Precise per-date coordinates are not yet available for every scene;
-the current prototype reuses one date's footprint coordinates for all other
-dates of the same path/row, a reasonable approximation given CBERS's
-documented $\pm$5 km track stability, but not pixel-exact across dates. This
-limitation, along with the underlying data, is documented in the project
-repository. A date/scene selector allows switching between all 13 available
-scenes, each correctly re-centering the map on its footprint.
-
-The interface was subsequently extended to surface individual detections
-directly, rather than the continuous heatmap alone: detected blobs
-(reusing the same blob-detection logic used for full-scene evaluation,
-Section~\ref{sec:falsepos}) are rendered as clickable markers, color-coded
-by confidence (max probability within the blob: red $>0.8$, orange
-$0.5$--$0.8$, blue $<0.5$), with a live threshold slider controlling which
-detections are shown. Since running blob detection directly in-browser is
-not practical at full scene resolution, marker positions are precomputed
-across a grid of 19 threshold levels (0.05--0.95) and the slider snaps to
-the nearest precomputed level, giving the appearance of continuous control
-in practice. Figure~\ref{fig:mapinterface} shows the interface on a
-reference-date scene (2020-10-08, path/row 226/121), for which exact
-footprint coordinates are available.
-
-\begin{figure}[htbp]
-\centering
-\includegraphics[width=\textwidth]{figures/fig_map_interface.png}
-\caption{Prototype map interface, showing the confidence-coded detection
-markers and threshold slider on a reference-date scene. Markers that
-appear visually distant from the main river channel at this zoom level
-were investigated (Section~\ref{sec:falsepos}) and found, on closer
-inspection, to sit near small tributary streams not obvious at this scale
---- consistent with the water-adjacency finding discussed there, not an
-inconsistency with it.}
-\label{fig:mapinterface}
-\end{figure}
-
 \section{Next Steps}
 \label{sec:nextsteps}
 
 \begin{enumerate}[nosep]
+  \item Build and validate an interactive map interface displaying
+        detections on a real satellite basemap, using footprint
+        coordinates recovered from CBERS product metadata, with
+        confidence-coded detection markers --- architecture prototyped but
+        not yet included as validated project output.
   \item Recover precise, per-date georeferencing (rather than the current
         one-date-per-footprint approximation) using the recovered raw band
         GeoTIFFs, and reintroduce the near-infrared band into the training
