@@ -4,6 +4,22 @@ data/
 # Training outputs (checkpoints, per-run metrics)
 runs/
 
+# Downloaded/cached scene imagery
+scene_cache/
+downloads/
+
+# Secrets
+.env
+
+# LaTeX build artifacts (docs/reports/*.tex may get auto-compiled by editor extensions)
+*.aux
+*.log
+*.out
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.toc
+
 # Python
 __pycache__/
 *.pyc
