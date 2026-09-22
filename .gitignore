@@ -36,3 +36,31 @@ Thumbs.db
 
 # Claude Code local session state
 .claude/
+
+# LaTeX auxiliary files
+*.aux
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.fls
+*.fdb_latexmk
+*.synctex
+*.synctex.gz
+*.bbl
+*.bcf
+*.blg
+*.run.xml
+*.nav
+*.snm
+*.vrb
+*.xdv
+
+# LaTeX build directories
+*.pdfsync
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
