@@ -134,6 +134,8 @@
     single date's CBERS metadata and reused across all dates on that footprint. CBERS
     track stability is ~&plusmn;5km pass-to-pass, so this is a reasonable demo-quality
     placement, not pixel-exact per-date georeferencing.
+    Marker accuracy is exact for the two reference-date scenes; other dates show a
+    documented positional approximation.
   </div>
 </div>
 
@@ -224,6 +226,13 @@
       `Date: <strong>${scene.date}</strong><br>Path/row: <strong>${scene.path_row}</strong>`;
   }
 
+  const REFERENCE_SCENE_IDS = new Set(['20201008_226_120', '20201008_226_121']);
+  const DEFAULT_SCENE_ID = '20201008_226_120';
+
+  function isReferenceScene(scene) {
+    return REFERENCE_SCENE_IDS.has(scene.id);
+  }
+
   const select = document.getElementById('scene-select');
   const groups = {};
   for (const scene of MANIFEST) {
@@ -234,7 +243,9 @@
     }
     const opt = document.createElement('option');
     opt.value = scene.id;
-    opt.textContent = scene.date;
+    opt.textContent = scene.date + (isReferenceScene(scene)
+      ? ' (exact georeferencing)'
+      : ' (approximate, ±5km)');
     groups[scene.path_row].appendChild(opt);
   }
 
@@ -264,7 +275,7 @@
 
   if (MANIFEST.length > 0) {
     const requested = new URLSearchParams(location.search).get('scene');
-    const initial = (requested && sceneById(requested)) || MANIFEST[0];
+    const initial = (requested && sceneById(requested)) || sceneById(DEFAULT_SCENE_ID) || MANIFEST[0];
     select.value = initial.id;
     showScene(initial);
   }
