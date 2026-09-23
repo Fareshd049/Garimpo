@@ -35,40 +35,53 @@ these numbers are in the [reports](#reports).
 
 ## Project Structure
 
-```
+```text
 Garimpo/
-├── src/garimpo/                  # Installable Python package
-│   ├── masks.py                  # Rasterize bounding boxes into per-tile binary masks
-│   ├── splits.py                 # Scene-grouped dev train/val split (no tile-level leakage)
-│   ├── datasets.py               # PyTorch Dataset pairing tiles and masks by filename
-│   ├── augmentation.py           # Joint image+mask augmentation for training
-│   ├── model.py                  # U-Net (ResNet18 encoder) model factory
-│   ├── losses.py                 # Weighted BCE + Dice loss, data-derived pos_weight
-│   ├── train.py                  # Training loop, checkpointing, early stopping
-│   ├── visualize.py               # Predicted-probability heatmaps on held-out val tiles
-│   ├── infer_scene.py            # Sliding-window inference over a full-size scene
-│   ├── scan_scene.py             # Blob detection over a stitched probability map
-│   ├── evaluate_detections.py    # Match blobs vs. ground truth -> TP/FP/FN, precision/recall
-│   ├── audit_artifacts.py        # Diagnostic: are positive labels near scan artifacts?
-│   ├── colorize_heatmap.py       # Probability maps -> RGBA overlays + web viewer manifest
-│   └── export_blob_markers.py    # Per-threshold blob markers for the web viewer's slider
-├── scripts/                      # Standalone, self-contained scripts (no repo imports)
-│   ├── verify_composicao_standalone.py                    # Kaggle: RGB-compositing accuracy check
-│   └── verify_composicao_detection_robustness_standalone.py  # Kaggle: detection robustness to re-compositing
-├── web_viewer/                   # Static Leaflet map viewer (no build step, no backend)
-│   ├── index.html                # Map UI: scene picker, opacity slider, per-detection markers
-│   ├── manifest.json / manifest.js   # Scene metadata (date, footprint, heatmap file)
-│   ├── blobs.js                  # Precomputed per-threshold detection markers
-│   └── heatmaps/                 # Per-scene RGBA heatmap overlays (PNG)
+
+├── src/
+│   ├── garimpo/                       # Main CBERS-4A detection package
+│   │   ├── masks.py                   # Rasterize bounding boxes into per-tile binary masks
+│   │   ├── splits.py                  # Scene-grouped dev train/val split
+│   │   ├── datasets.py                # PyTorch Dataset pairing tiles and masks
+│   │   ├── augmentation.py            # Joint image+mask augmentation
+│   │   ├── model.py                   # U-Net (ResNet18 encoder) model factory
+│   │   ├── losses.py                  # Weighted BCE + Dice loss
+│   │   ├── train.py                   # Training loop, checkpointing, early stopping
+│   │   ├── visualize.py               # Predicted-probability heatmaps
+│   │   ├── infer_scene.py             # Sliding-window inference over full scenes
+│   │   ├── scan_scene.py              # Blob detection over probability maps
+│   │   ├── evaluate_detections.py     # TP/FP/FN, precision/recall evaluation
+│   │   ├── audit_artifacts.py         # Diagnostic artifact analysis
+│   │   ├── colorize_heatmap.py        # Probability maps → RGBA overlays
+│   │   └── export_blob_markers.py     # Detection markers for the web viewer
+│   │
+│   └── garimpo_sentinel/              # Sentinel-1 / Sentinel-2 data preparation
+│       ├── GEE_code.js                # Google Earth Engine S1/S2 pairing and export
+│       ├── Sentinel1_search.js        # Sentinel-1 acquisition search and export
+│       └── data_visualization.ipynb   # Dataset inspection and visualization
+│
+├── scripts/                           # Standalone verification scripts
+│   ├── verify_composicao_standalone.py
+│   └── verify_composicao_detection_robustness_standalone.py
+│
+├── web_viewer/                        # Static Leaflet map viewer
+│   ├── index.html
+│   ├── manifest.json / manifest.js
+│   ├── blobs.js
+│   └── heatmaps/
+│
 ├── docs/
-│   ├── dataset_limitations.md    # Label-quality audit: mosaic-seam proximity, duplicate boxes
-│   ├── images/                   # Result figures embedded in this README
-│   └── reports/                  # Full written reports (see Reports below)
-├── data/                         # Gitignored: raw scenes, tiles, masks, bboxes.csv, labels.csv
-├── runs/                         # Gitignored: training run outputs (checkpoints, metrics.csv)
-├── pyproject.toml                # Package metadata and dependencies
+│   ├── dataset_limitations.md
+│   ├── images/
+│   └── reports/
+│
+├── data/                              # Gitignored: CBERS scenes, tiles, masks, labels
+├── runs/                              # Gitignored: training outputs
+├── pyproject.toml
 └── .gitignore
 ```
+
+
 
 `data/` and `runs/` are not tracked in git (too large, and reproducible from scripts) —
 they must be populated locally before running the pipeline. `scene_cache/` and
@@ -145,6 +158,75 @@ Defaults to `runs/runs_v3/scene_inference/` and `data/`; override with
 
 **Live backend:** a served API/backend for the viewer is planned but not yet implemented
 in this repository.
+
+## Sentinel-1 / Sentinel-2 Complementary Dataset
+
+In parallel with the CBERS-4A detection pipeline, a complementary **Sentinel-1 / Sentinel-2 data-preparation track** was developed to address the cloud-cover limitations of optical imagery in the Amazon.
+
+The objective was to build a fully georeferenced and temporally documented multimodal dataset for future garimpo detection experiments. **Sentinel-1** provides all-weather radar observations, while **Sentinel-2** provides optical information useful for visual interpretation and annotation.
+
+### Principle
+
+CBERS-4A and other optical imagery can be strongly affected by cloud cover in the Amazon. Sentinel-1 radar is not affected by cloud obstruction, but its interpretation is more challenging because of **speckle and ambiguous radar signatures**, including wake-like structures.
+
+The complementary dataset therefore combines:
+
+* **Sentinel-1:** VV and VH radar backscatter
+* **Sentinel-2:** Red, Green, Blue, and NIR optical bands
+
+This produces a **six-band representation**:
+
+`VV, VH, Red, Green, Blue, NIR`
+
+Sentinel-2 was also used as a visual support for the manual annotation of garimpo areas.
+
+### Data Preparation Pipeline
+
+An automated **Google Earth Engine** pipeline was developed to search for and pair Sentinel-1 and Sentinel-2 acquisitions according to the following criteria:
+
+* Temporal difference between Sentinel-1 and Sentinel-2 acquisitions: **$\leq$ 6 days**
+* Sentinel-2 cloud cover over the AOI: **< 30%**
+* Cloud probability threshold: **> 40%**
+* Spatial overlap between the AOI, Sentinel-1, and Sentinel-2: **at least 200,000 pixels at 10 m resolution**
+* For each Sentinel-1 acquisition, the closest suitable Sentinel-2 acquisition was selected.
+
+### Dataset
+
+The resulting dataset contains:
+
+* **102 GeoTIFF images**
+* Approximately **9987 $\times$ 10003 pixels** per image
+* **6 bands:** VV, VH, Red, Green, Blue, NIR
+* **10 m/pixel** spatial resolution
+* **EPSG:32720** coordinate reference system
+* **Float32** data type
+* Exact geographic footprint and paired Sentinel-1/Sentinel-2 acquisition dates preserved in the metadata
+* Manual garimpo annotations produced with **SNAP**, stored as shapefiles
+
+The dataset is structured as follows:
+
+```text
+garimpo_dataset/
+├── images/        # 6-band Sentinel-1/Sentinel-2 GeoTIFF images
+└── annotations/   # Shapefile annotations for each image
+```
+
+### Repository Contents
+
+| File                       | Description                                                                                                        |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `GEE_code.js`              | Google Earth Engine pipeline for searching Sentinel-1/Sentinel-2 pairs and exporting 6-band GeoTIFFs               |
+| `Sentinel1_search.js`      | Searches for a Sentinel-1 acquisition at a specified date and exports PNG / GeoTIFF data                           |
+| `data_visualization.ipynb` | Dataset inspection, metadata analysis, validity-mask visualization, and visualization of VV / VH / RGB / NIR bands |
+
+### Public Dataset
+
+The resulting annotated dataset is publicly available on Kaggle:
+
+**[Garimpo Dataset — Sentinel-1 / Sentinel-2](https://www.kaggle.com/datasets/soufianeech/garimpo-dataset-sentinel-1-sentinel-2)**
+
+This dataset was **not used to train the final CBERS-4A-only detector presented in this repository**. It is provided as a complementary, georeferenced and annotated resource for future experiments involving Sentinel-1, Sentinel-2, or multimodal satellite imagery.
+
 
 ## Known Limitations
 
