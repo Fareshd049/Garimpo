@@ -18,7 +18,7 @@ Aggregated across all 13 available CBERS-4A scenes (2 footprints, 34 confirmed u
 garimpo sites after merging duplicate corner labels), at a probability threshold of 0.5:
 
 - **100% recall** — every one of the 34 known sites is detected, with zero false negatives.
-- **69.4% raw precision** (34 TP / 112 detected blobs), rising to **72.6%** once
+- **69.4% raw precision** (34 TP / 49 detected blobs), rising to **72.6%** once
   false positives sitting on documented mosaic-seam/nodata artifacts are excluded.
 - Evaluated over **13 scenes** spanning 2020–2023, covering **34 confirmed sites**.
 
